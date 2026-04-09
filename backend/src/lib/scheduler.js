@@ -276,9 +276,9 @@ function generateSchedule(parsed) {
     },
     facultyLoad: parsed.courses.map((course) => {
       const courseAssignments = assignments.filter((item) => item.courseId === course.id);
-      const preferredHits = courseAssignments.filter(
-        (item) => item.preferenceBandMatched || item.preferredDayMatched,
-      ).length;
+      const preferredHours = courseAssignments
+        .filter((item) => item.preferenceBandMatched || item.preferredDayMatched)
+        .reduce((total, item) => total + item.duration, 0);
       const requestedHours =
         course.requiredLecturesToCover ??
         course.theoryHoursPerWeek ??
@@ -291,7 +291,7 @@ function generateSchedule(parsed) {
         scheduledHours,
         requestedHours,
         matchPercent: requestedHours
-          ? Math.round((preferredHits / requestedHours) * 100)
+          ? Math.round((preferredHours / requestedHours) * 100)
           : 0,
       };
     }),
