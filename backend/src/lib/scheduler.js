@@ -114,6 +114,21 @@ function generateSchedule(parsed) {
     courseTimeSlotUsage.set(course.id, new Set());
   }
 
+  function recordConflict(session, course) {
+    conflicts.push({
+      sessionId: session.id,
+      courseName: course.courseName,
+      faculty: course.faculty,
+      sections: course.sections,
+      reason: "No clash-free slot was available for this class under the current constraints.",
+      suggestions: [
+        `Relax ${course.faculty}'s time preference for ${course.courseName}.`,
+        `Move ${course.courseName} to an alternate room if possible.`,
+        `Split combined sections into separate sessions to reduce contention.`,
+      ],
+    });
+  }
+
   function backtrack(index) {
     if (index >= sessions.length) {
       return true;
@@ -236,19 +251,8 @@ function generateSchedule(parsed) {
       candidate.timeRange.forEach((time) => trackedSlots.delete(time));
     }
 
-    conflicts.push({
-      sessionId: session.id,
-      courseName: course.courseName,
-      faculty: course.faculty,
-      sections: course.sections,
-      reason: "No clash-free slot was available for this class under the current constraints.",
-      suggestions: [
-        `Relax ${course.faculty}'s time preference for ${course.courseName}.`,
-        `Move ${course.courseName} to an alternate room if possible.`,
-        `Split combined sections into separate sessions to reduce contention.`,
-      ],
-    });
-    return false;
+    recordConflict(session, course);
+    return backtrack(index + 1);
   }
 
   backtrack(0);
