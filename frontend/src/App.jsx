@@ -200,10 +200,6 @@ function App() {
   const [isImporting, setIsImporting] = useState(false)
   const [expandedCourse, setExpandedCourse] = useState('')
   const [markedAbsences, setMarkedAbsences] = useState({}) // Track teacher absences across dates
-  const [showRequiredLectures, setShowRequiredLectures] = useState(false)
-  const [aiSuggestions, setAiSuggestions] = useState(null)
-  const [isOptimizing, setIsOptimizing] = useState(false)
-  const [isApplyingOptimizations, setIsApplyingOptimizations] = useState(false)
 
   useEffect(() => {
     let active = true
@@ -327,21 +323,8 @@ function App() {
     }
   }
   
-  function getScheduleStats() {
-    const stats = {
-      totalTeachers: teachers.length,
-      totalCourses: planner.courses.length,
-      scheduledHours: planner.courses.reduce((sum, c) => sum + c.theoryHoursPerWeek + c.practicalHoursPerWeek, 0),
-      requiredHours: planner.courses.reduce((sum, c) => sum + (c.requiredLecturesToCover || c.theoryHoursPerWeek), 0),
-    }
-    return stats
-  }
-  
   async function autoSubstitute() {
     if (!schedule) return
-    
-    // Check if teacher is absent (recurring or single date)
-    const isMarkedAbsent = markedAbsences[`${absence.absentTeacher}-${absence.day}`]
     
     if (!absence.absentTeacher) {
       setError('Please select a teacher to mark as absent.')
@@ -370,13 +353,6 @@ function App() {
     }
   }
   
-  function markRecurringAbsence(teacher) {
-    // Mark teacher as absent for the current week
-    setAbsence({ absentTeacher: teacher, day: 'Monday' })
-    // Could extend to mark multiple days - for now, shows the intention
-    setMessage(`Marking ${teacher} for weekly leave review. Use the day selector and click "Auto-cover" for each day.`)
-  }
-  
   function getMarkedAbsencesForTeacher(teacher) {
     return Object.entries(markedAbsences)
       .filter(([key]) => key.startsWith(`${teacher}-`))
@@ -393,44 +369,6 @@ function App() {
     downloadBlob(response.data, 'ScheduleAI.ics', 'text/calendar;charset=utf-8')
     setMessage('Calendar exported successfully.')
     setError('')
-  }
-
-  async function optimizeScheduleAI() {
-    if (!schedule || !data?.parsed) return
-    setIsOptimizing(true)
-    try {
-      const response = await axios.post('/api/optimize/ai', { schedule, parsed: data.parsed })
-      setAiSuggestions(response.data.suggestions)
-      setMessage('AI optimization suggestions generated.')
-      setError('')
-    } catch (err) {
-      setError('Failed to get AI suggestions. Please check your API key configuration.')
-    } finally {
-      setIsOptimizing(false)
-    }
-  }
-
-  async function applyOptimizationsToSchedule() {
-    if (!schedule || !data?.parsed) return
-    setIsApplyingOptimizations(true)
-    try {
-      const response = await axios.post('/api/optimize/apply', { schedule, parsed: data.parsed })
-      if (response.data.improvedSchedule) {
-        setData({
-          ...data,
-          schedule: response.data.improvedSchedule,
-        })
-        setMessage(`✅ Applied ${response.data.optimizationsApplied} improvements to the schedule.`)
-        setAiSuggestions(null) // Clear old suggestions
-        setError('')
-      } else {
-        setError('Failed to apply optimizations.')
-      }
-    } catch (err) {
-      setError('Error applying optimizations: ' + err.message)
-    } finally {
-      setIsApplyingOptimizations(false)
-    }
   }
 
   async function exportPdf() {
@@ -1517,21 +1455,21 @@ function App() {
         </div>
         
         <nav className="flex flex-col gap-6">
-          {navigationItems.map(({ id, label, icon: Icon }) => (
+          {navigationItems.map((item) => (
             <button
-              key={id}
-              onClick={() => setCurrentPage(id)}
+              key={item.id}
+              onClick={() => setCurrentPage(item.id)}
               className="relative w-12 h-12 glass-button transition-all flex items-center justify-center group"
               style={{
-                backgroundColor: currentPage === id ? 'rgba(161, 165, 176, 0.2)' : 'transparent',
-                color: currentPage === id ? '#a1a5b0' : '#94a3b8',
+                backgroundColor: currentPage === item.id ? 'rgba(161, 165, 176, 0.2)' : 'transparent',
+                color: currentPage === item.id ? '#a1a5b0' : '#94a3b8',
               }}
-              title={label}
+              title={item.label}
             >
-              <Icon className="h-6 w-6" />
-              {currentPage === id && (
+              <item.icon className="h-6 w-6" />
+              {currentPage === item.id && (
                 <span className="absolute -right-32 top-1/2 -translate-y-1/2 whitespace-nowrap px-3 py-2 rounded-lg text-sm font-medium glass-elevated animate-fade-in-down" style={{ color: '#e2e8f0' }}>
-                  {label}
+                  {item.label}
                 </span>
               )}
             </button>
