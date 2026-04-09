@@ -49,16 +49,7 @@ function computeScheduleScore(assignments, parsed) {
       breakdown["SC-02"] += p;
     }
 
-    // SC-03: same subject on same day (count once per extra occurrence)
-    if (others.some((a) => a.courseId === assignment.courseId && a.day === assignment.day)) {
-      const p = PENALTY_WEIGHTS["SC-03"];
-      localPenalties.push({
-        id: "SC-03",
-        penalty: p,
-        description: `"${assignment.courseName}" has another session on ${assignment.day}.`,
-      });
-      breakdown["SC-03"] += p;
-    }
+    // SC-03 is computed once per course-day group after this loop (see below).
 
     // SC-04: lab/practical with non-consecutive slots
     if (assignment.sessionType === "practical" && assignment.duration > 1) {
@@ -131,6 +122,34 @@ function computeScheduleScore(assignments, parsed) {
     });
   }
 
+  // ── SC-03: same subject on same day — counted once per course-day violation ──
+  // Group assignments by (courseId + day). Any group with >1 assignment incurs
+  // exactly one SC-03 penalty (not one per extra session), preventing double-counting.
+  const courseDayGroups = new Map();
+  for (const a of assignments) {
+    const key = `${a.courseId}::${a.day}`;
+    if (!courseDayGroups.has(key)) courseDayGroups.set(key, []);
+    courseDayGroups.get(key).push(a);
+  }
+  for (const [, group] of courseDayGroups) {
+    if (group.length > 1) {
+      const p = PENALTY_WEIGHTS["SC-03"];
+      breakdown["SC-03"] += p;
+      // Attribute to the first assignment in the group for UI display
+      const target = perAssignment.find((pa) =>
+        group.some((a) => a.id === pa.assignmentId),
+      );
+      if (target) {
+        target.penalty += p;
+        target.penalties.push({
+          id: "SC-03",
+          penalty: p,
+          description: `"${group[0].courseName}" has ${group.length} sessions on ${group[0].day}.`,
+        });
+      }
+    }
+  }
+
   // ── Per-day, per-faculty pass  (SC-01 gaps, SC-07 spread, SC-08 consecutive) ──
   for (const day of DAYS) {
     const dayAssignments = assignments.filter((a) => a.day === day);
@@ -200,24 +219,33 @@ function computeScheduleScore(assignments, parsed) {
     }
   }
 
-  // SC-07: subject not spread across week (2+ sessions on same day for same course)
-  const coursesByDay = new Map();
+  // SC-07: subject not spread across week.
+  // For each course with more than 1 session, penalise if the number of
+  // distinct days used is fewer than floor(sessionCount/2) — i.e. sessions
+  // are clustered rather than distributed.
+  const courseSessionMap = new Map();
   for (const a of assignments) {
-    const key = `${a.courseId}-${a.day}`;
-    coursesByDay.set(key, (coursesByDay.get(key) || 0) + 1);
+    if (!courseSessionMap.has(a.courseId)) {
+      courseSessionMap.set(a.courseId, { courseName: a.courseName, days: new Set(), ids: [] });
+    }
+    const entry = courseSessionMap.get(a.courseId);
+    entry.days.add(a.day);
+    entry.ids.push(a.id);
   }
-  for (const [key, count] of coursesByDay) {
-    if (count > 1) {
-      const p = PENALTY_WEIGHTS["SC-07"] * (count - 1);
+  for (const [courseId, { courseName, days, ids }] of courseSessionMap) {
+    const sessionCount = ids.length;
+    if (sessionCount <= 1) continue;
+    const idealMinDays = Math.ceil(sessionCount / 2);
+    if (days.size < idealMinDays) {
+      const p = PENALTY_WEIGHTS["SC-07"] * (idealMinDays - days.size);
       breakdown["SC-07"] += p;
-      const [courseId, day] = key.split("-");
-      const target = perAssignment.find((pa) => pa.courseId === courseId && pa.day === day);
+      const target = perAssignment.find((pa) => ids.includes(pa.assignmentId));
       if (target) {
         target.penalty += p;
         target.penalties.push({
           id: "SC-07",
           penalty: p,
-          description: `${count} sessions of "${target.courseName}" on the same day (${day}).`,
+          description: `"${courseName}" has ${sessionCount} sessions but only ${days.size} distinct day(s) — sessions are clustered.`,
         });
       }
     }
