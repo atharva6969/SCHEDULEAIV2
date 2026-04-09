@@ -91,9 +91,33 @@ function normalizeCourse(course, index) {
     preferredBands: unique(course.preferredBands || []),
     preferredDays: unique(course.preferredDays || []),
     blockedDays: unique(course.blockedDays || []),
+    // Per-teacher availability: specific time slots this faculty cannot teach
+    blockedTimes: unique(course.blockedTimes || []),
     roomPreference: course.roomPreference || "",
     roomType: course.roomType || "lecture",
     studentCount: Math.max(0, Number(course.studentCount) || 0),
+    // Higher priority courses are scheduled first (conflict resolution ordering).
+    // 0 = normal; higher integers = higher urgency (e.g. final-year, lab-heavy).
+    priority: Math.max(0, Number(course.priority) || 0),
+  };
+}
+
+function normalizeLockedSlot(slot, index) {
+  return {
+    id: slot.id || `locked-${index + 1}`,
+    courseId: slot.courseId || "",
+    courseName: slot.courseName || "",
+    faculty: slot.faculty || "",
+    sections: unique(slot.sections || []),
+    room: slot.room || "",
+    day: slot.day || "",
+    time: slot.time || "",
+    slotKeys: slot.slotKeys || (slot.day && slot.time ? [`${slot.day}-${slot.time}`] : []),
+    timeLabel: slot.timeLabel || slot.time || "",
+    sessionType: slot.sessionType || "theory",
+    duration: Math.max(1, Number(slot.duration) || 1),
+    locked: true,
+    lockedReason: slot.lockedReason || slot.reason || "Admin-locked",
   };
 }
 
@@ -115,6 +139,8 @@ function normalizeInputData(inputData) {
     globalRules: {
       blockedTimes: unique(inputData?.globalRules?.blockedTimes || []),
       notes: unique(inputData?.globalRules?.notes || []),
+      // Admin-locked slots: immutable pre-placed assignments
+      lockedSlots: (inputData?.globalRules?.lockedSlots || []).map(normalizeLockedSlot),
     },
     courses: (inputData?.courses || []).map(normalizeCourse),
   };

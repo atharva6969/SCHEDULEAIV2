@@ -14,6 +14,8 @@ const { analyzeScheduleQuality, detectConflicts, suggestOptimizations, costAnaly
 const { recordTeacherPreferences, getAdaptiveSuggestions, detectPatterns, predictScheduleSuccess, globalLearning, getTeacherStats, getAllStats, resetLearning } = require("./lib/aiLearningSystem");
 const { autoGenerateSchedule, autoOptimizeSchedule } = require("./lib/aiAutoGeneration");
 const { applyOptimizations, improveScheduleQuality } = require("./lib/autoOptimizer");
+const { generateScheduleV2 } = require("./solver/index");
+const { HARD_CONSTRAINTS, SOFT_CONSTRAINTS, checkHardConstraints } = require("./solver/constraints");
 
 const app = express();
 const port = process.env.PORT || 4000;
@@ -571,6 +573,153 @@ app.post("/api/learn/reset", (req, res, next) => {
     const { faculty } = req.body;
     const result = resetLearning(faculty);
     res.json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ============= SOLVER V2: HYBRID BACKTRACKING + SIMULATED ANNEALING =============
+
+/**
+ * GET /api/constraints/spec
+ * Returns the full constraint catalogue (hard + soft) with IDs, descriptions,
+ * and penalty weights.  Useful for UI displays and documentation.
+ */
+app.get("/api/constraints/spec", (_req, res) => {
+  res.json({
+    hard: HARD_CONSTRAINTS,
+    soft: SOFT_CONSTRAINTS,
+    summary: {
+      hardCount: HARD_CONSTRAINTS.length,
+      softCount: SOFT_CONSTRAINTS.length,
+      note: "Hard constraints must never be violated. Soft constraints are minimised via weighted penalty scoring.",
+    },
+  });
+});
+
+/**
+ * POST /api/schedule/v2
+ * Generate a timetable with the hybrid solver (backtracking + SA improver).
+ * Accepts the same body as POST /api/schedule.
+ *
+ * Additional options in body:
+ *   seed          {number}  – PRNG seed for reproducibility (default 42)
+ *   timeoutMs     {number}  – total solver budget in ms (default 30000)
+ *   multiStart    {number}  – number of independent solver runs (default 1)
+ */
+app.post("/api/schedule/v2", async (req, res, next) => {
+  try {
+    const parsed = await resolveInput(req.body);
+    const { seed, timeoutMs, multiStart } = req.body || {};
+
+    const schedule = generateScheduleV2(parsed, {
+      seed: seed != null ? Number(seed) : 42,
+      timeoutMs: timeoutMs != null ? Number(timeoutMs) : 30000,
+      multiStartCount: multiStart != null ? Number(multiStart) : 1,
+    });
+
+    res.json({
+      parsed,
+      schedule,
+      summary: {
+        source: parsed.source,
+        headline:
+          "Hybrid solver: backtracking (MRV/LCV) + simulated-annealing improver with full constraint catalogue",
+        totalPenalty: schedule.score?.totalPenalty ?? null,
+        conflicts: schedule.conflicts?.length ?? 0,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * POST /api/analyze/realtime-conflicts
+ * Check a single proposed assignment against an existing schedule for hard
+ * constraint violations BEFORE it is saved.  This powers the UI's live
+ * conflict detection during manual edits.
+ *
+ * Body:
+ *   proposedAssignment {object} – the assignment the user wants to place:
+ *     { courseId, courseName, faculty, sections, room (name string),
+ *       day, time, duration, sessionType, studentCount? }
+ *   currentAssignments {Array}  – already-placed assignments in the schedule
+ *   parsed             {object} – optional normalised input for room lookups
+ */
+app.post("/api/analyze/realtime-conflicts", (req, res, next) => {
+  try {
+    const { proposedAssignment, currentAssignments, parsed } = req.body || {};
+
+    if (!proposedAssignment) {
+      res.status(400).json({ error: "proposedAssignment is required." });
+      return;
+    }
+
+    const { day, time, room: roomName, duration = 1, sessionType = "theory" } =
+      proposedAssignment;
+
+    if (!day || !time || !roomName) {
+      res.status(400).json({ error: "proposedAssignment must include day, time, and room." });
+      return;
+    }
+
+    // Build room object for the check
+    const roomsSource = parsed?.rooms || [];
+    const roomObj = roomsSource.find((r) => r.name === roomName) || {
+      name: roomName,
+      type: sessionType === "practical" ? "lab" : "lecture",
+      capacity: proposedAssignment.studentCount || 999,
+    };
+
+    // Build a minimal course shape for the constraint checker
+    const course = {
+      id: proposedAssignment.courseId || "unknown",
+      courseName: proposedAssignment.courseName || "Unknown Course",
+      faculty: proposedAssignment.faculty || "",
+      sections: proposedAssignment.sections || [],
+      studentCount: proposedAssignment.studentCount || 0,
+      blockedDays: proposedAssignment.blockedDays || [],
+      blockedTimes: proposedAssignment.blockedTimes || [],
+    };
+
+    // Build time range
+    const { getSlotRange } = require("./solver/constraints");
+    const timeRange = getSlotRange(time, Number(duration));
+    if (!timeRange) {
+      res.status(400).json({
+        error: `Invalid time "${time}" or duration ${duration} for the configured timetable slots.`,
+      });
+      return;
+    }
+    const slotKeys = timeRange.map((t) => `${day}-${t}`);
+
+    const session = {
+      id: proposedAssignment.id || "proposed",
+      course,
+      duration: Number(duration),
+      sessionType,
+      requiredRoomType: sessionType === "practical" ? "lab" : "lecture",
+    };
+
+    const existing = Array.isArray(currentAssignments) ? currentAssignments : [];
+    const rules = parsed?.globalRules || {};
+
+    const { valid, violations } = checkHardConstraints(
+      { day, time, timeRange, slotKeys, room: roomObj },
+      session,
+      existing,
+      rules,
+    );
+
+    res.json({
+      valid,
+      violations,
+      proposedSlot: { day, time, timeRange, room: roomName },
+      message: valid
+        ? "No hard constraint violations detected. Safe to save."
+        : `${violations.length} hard constraint violation(s) found. Assignment cannot be saved as-is.`,
+    });
   } catch (error) {
     next(error);
   }
