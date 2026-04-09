@@ -248,7 +248,7 @@ function generateSchedule(parsed) {
         `Split combined sections into separate sessions to reduce contention.`,
       ],
     });
-    return false;
+    return backtrack(index + 1);
   }
 
   backtrack(0);
@@ -275,22 +275,20 @@ function generateSchedule(parsed) {
       substitutionCount: 0,
     },
     facultyLoad: parsed.courses.map((course) => {
-      const facultyAssignments = assignments.filter((item) => item.faculty === course.faculty);
-      const preferredHits = facultyAssignments.filter(
-        (item) => item.preferenceBandMatched || item.preferredDayMatched,
-      ).length;
+      const courseAssignments = assignments.filter((item) => item.courseId === course.id);
       const requestedHours =
         course.requiredLecturesToCover ??
         course.theoryHoursPerWeek ??
         course.hoursPerWeek;
+      const scheduledHours = courseAssignments.reduce((total, item) => total + item.duration, 0);
 
       return {
         faculty: course.faculty,
         courseName: course.courseName,
-        scheduledHours: facultyAssignments.reduce((total, item) => total + item.duration, 0),
+        scheduledHours,
         requestedHours,
         matchPercent: requestedHours
-          ? Math.round((preferredHits / requestedHours) * 100)
+          ? Math.round((scheduledHours / requestedHours) * 100)
           : 0,
       };
     }),
